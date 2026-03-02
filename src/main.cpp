@@ -1,6 +1,13 @@
 #include <Arduino.h>
 #include <FastAccelStepper.h>
 
+#ifdef USE_LCD
+#include "NonBlockingLcd.h"
+static NonBlockingLcd lcd;
+void updateLcdContent(bool ena, bool dir, bool fast, float speed,
+                      bool mode, bool limited);
+#endif
+
 #define UART_RX        (0)
 #define UART_TX        (1)
 #define SW_LIMIT_CW    (2)
@@ -25,10 +32,12 @@
 #define ADC_MAN_SPEED (A7)
 
 // ステップ周波数の範囲 (Hz)
-#define STEP_FREQ_MIN    100
-#define STEP_FREQ_MAX  10000
+#define STEP_FREQ_MIN    50
+#define STEP_FREQ_MAX  5000
 // FAST モード時の倍率
 #define STEP_FAST_MULT   10
+// FastAccelStepper (AVR, 1stepper) の上限は 50000Hz
+#define STEP_FREQ_LIMIT  50000UL
 
 // ADC電圧の閾値 (V) — この電圧以下ではモーター停止
 #define SPEED_THRESHOLD 0.5f
@@ -79,6 +88,10 @@ void setup() {
   // SW_MAN_FAST (pin 9 = OC1A) は Timer1 初期化後に設定
   // engine.init() が Timer1 を再構成するため、先に設定すると上書きされる可能性がある
   pinMode(SW_MAN_FAST, INPUT_PULLUP);
+
+#ifdef USE_LCD
+  lcd.init();
+#endif
 }
 
 float analogReadOS(uint8_t pin, AdcOsState* st) {
@@ -93,7 +106,6 @@ float analogReadOS(uint8_t pin, AdcOsState* st) {
 static bool     prevRunning = false;
 static uint32_t prevFreq    = 0;
 static bool     prevDir     = false;
-static bool     prevFast    = false;
 
 void loop() {
   bool  ena  = false;
@@ -137,8 +149,9 @@ void loop() {
   // --- ステップパルス制御 (FastAccelStepper) ---
   bool shouldRun = ena && (speed > SPEED_THRESHOLD) && !limited;
 
-  // 方向 or FAST が変わったらパルス停止 → 出力変更 → 再始動の順序を保証
-  if (prevRunning && (dir != prevDir || fast != prevFast || !shouldRun)) {
+  // 方向変更 or 停止時のみパルス停止 → 出力変更 → 再始動の順序を保証
+  // FAST 切替は速度変更のみなので force-stop 不要 (加減速で対応)
+  if (prevRunning && (dir != prevDir || !shouldRun)) {
     stepper->forceStopAndNewPosition(0);
     prevRunning = false;
   }
@@ -148,7 +161,6 @@ void loop() {
   digitalWrite(MOTOR_ENA, !ena);
   digitalWrite(MOTOR_DIR, !dir);
   prevDir  = dir;
-  prevFast = fast;
 
   if (shouldRun) {
     // 電圧 → 周波数 に変換
@@ -156,8 +168,9 @@ void loop() {
     if (ratio > 1.0f) ratio = 1.0f;
     uint32_t freq = (uint32_t)(STEP_FREQ_MIN + ratio * (STEP_FREQ_MAX - STEP_FREQ_MIN));
 
-    // FAST モード
+    // FAST モード (ライブラリ上限でクランプ)
     if (fast) freq *= STEP_FAST_MULT;
+    if (freq > STEP_FREQ_LIMIT) freq = STEP_FREQ_LIMIT;
 
     // 状態が変化した場合のみ再設定
     if (!prevRunning || freq != prevFreq) {
@@ -167,4 +180,34 @@ void loop() {
       prevRunning = true;
     }
   }
+
+#ifdef USE_LCD
+  updateLcdContent(ena, dir, fast, speed, mode, limited);
+  lcd.update();
+#endif
 }
+
+#ifdef USE_LCD
+// LCD表示内容を更新するヘルパー関数
+// 必要に応じてカスタマイズしてください
+void updateLcdContent(bool ena, bool dir, bool fast, float speed,
+                      bool mode, bool limited) {
+  // 1行目: モード・状態
+  char line[LCD_COLS + 1];
+  snprintf(line, sizeof(line), "%s %s %s%s",
+           mode ? "COM" : "MAN",
+           ena  ? "RUN" : "STP",
+           dir  ? "CW " : "CCW",
+           fast ? " FST" : "");
+  lcd.setText(0, line);
+
+  // 2行目: 速度・リミット
+  if (limited) {
+    lcd.setText(1, "** LIMITED **   ");
+  } else {
+    int sv = (int)(speed * 100);
+    snprintf(line, sizeof(line), "SPD:%d.%02dV       ", sv / 100, sv % 100);
+    lcd.setText(1, line);
+  }
+}
+#endif
