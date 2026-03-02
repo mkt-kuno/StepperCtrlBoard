@@ -90,7 +90,7 @@ void setup() {
   pinMode(SW_MAN_FAST, INPUT_PULLUP);
 
 #ifdef USE_LCD
-  lcd.init();
+  lcd.begin();
 #endif
 }
 
