@@ -37,7 +37,7 @@ void updateLcdContent(bool ena, bool dir, bool fast, float speed,
 #define STEP_FREQ_MAX  5000
 // FAST モード時の倍率
 #define STEP_FAST_MULT   10
-// FastAccelStepper (AVR, 1stepper) の上限は 50000Hz
+// FastAccelStepper (AVR, 1stepper) の上限は 50kHz
 #define STEP_FREQ_LIMIT  50000UL
 
 // ADC電圧の閾値 (V) — この電圧以下ではモーター停止

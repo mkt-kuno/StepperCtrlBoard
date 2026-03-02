@@ -1,16 +1,18 @@
-# StepperCtrlBox
+# NextGenCtrlBox
 
 Arduino Nano ベースのステッピングモータ制御ボックス。手動スイッチ操作と外部コンピュータ制御の 2 モードに対応し、ボリュームによる速度調整・リミットスイッチによる安全停止機能を備えます。
 
 ## 機能一覧
 
 - **Manual / Computer 切替** — MODE スイッチで操作モードを選択
-- **可変速度制御** — ボリューム (ADC) による無段階速度調整 (100–10,000 Hz)
-- **FAST モード** — 手動モード時に速度を 10 倍に引き上げ (最大 100,000 Hz)
+- **可変速度制御** — ボリューム (ADC) による無段階速度調整 (50–5,000 Hz)
+- **FAST モード** — 手動モード時に速度を 10 倍に引き上げ (最大 50,000 Hz)
 - **CW / CCW リミットスイッチ** — 該当方向のみ停止、逆方向は許可
 - **LED ステータス表示** — MODE / ENA / DIR / FAST の各状態を LED で表示
 - **オーバーサンプリング ADC** — 16 サンプル移動平均でノイズを低減
 - **FastAccelStepper** — ハードウェアタイマ (Timer1) による正確なパルス生成
+- **FastGPIO** — デジタル入出力を直接レジスタ操作で高速化
+- **ADC 割り込み駆動** — `ADC_vect` ISR による非同期 ADC 変換でループブロッキングを排除
 
 ## ハードウェア構成
 
@@ -49,8 +51,18 @@ MOTOR_ENA / MOTOR_DIR / MOTOR_STEP の各信号は **NPN トランジスタで�
 Arduino ──[信号]──> NPN トランジスタ ──[反転信号]──> TB6600
 ```
 
-- `digitalWrite(MOTOR_ENA, !ena)` — HIGH で無効、LOW で有効
-- `digitalWrite(MOTOR_DIR, !dir)` — 反転後の論理で方向を決定
+- `FastGPIO::Pin<MOTOR_ENA>::setOutputValue(!ena)` — HIGH で無効、LOW で有効
+- `FastGPIO::Pin<MOTOR_DIR>::setOutputValue(!dir)` — 反転後の論理で方向を決定
+
+## パフォーマンス
+
+FastGPIO と ADC 割り込みにより、メインループの所要時間を大幅に短縮しています。
+
+| 処理 | 標準 Arduino | 最適化後 |
+|------|-------------|---------|
+| digitalRead × 8 | ~40 us | ~1 us (FastGPIO) |
+| digitalWrite × 7 | ~35 us | ~0.9 us (FastGPIO) |
+| analogRead × 2 | ~200 us | ~0.25 us (ADC 割り込み) |
 
 ## ビルド・書き込み
 
