@@ -1,0 +1,11 @@
+# PlatformIO
+.pio/
+
+# VS Code
+.vscode/
+
+# Temporary files
+*.bak
+*.tmp
+*.swp
+*~
