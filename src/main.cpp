@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <FastAccelStepper.h>
+#include <FastGPIO.h>
 
 #ifdef USE_LCD
 #include "NonBlockingLcd.h"
@@ -55,6 +56,45 @@ struct AdcOsState {
 static AdcOsState adcManState = {{0}, 0};
 static AdcOsState adcComState = {{0}, 0};
 
+// --- ADC割り込み駆動 ---
+// A6 = MUX[3:0] = 0110, A7 = MUX[3:0] = 0111
+static volatile uint16_t adc_raw[2]; // [0]=A6(COM), [1]=A7(MAN)
+static volatile uint8_t  adc_ch = 6; // 現在の変換チャンネル (6 or 7)
+
+ISR(ADC_vect) {
+  uint16_t val = ADC; // ADCL + ADCH を読み取り
+  if (adc_ch == 6) {
+    adc_raw[0] = val;
+    adc_ch = 7;
+  } else {
+    adc_raw[1] = val;
+    adc_ch = 6;
+  }
+  // 次チャンネルに切替して変換開始
+  ADMUX = (ADMUX & 0xF0) | (adc_ch & 0x0F);
+  ADCSRA |= (1 << ADSC);
+}
+
+static void adc_init() {
+  // AVcc基準, チャンネル6
+  ADMUX  = (1 << REFS0) | 6;
+  // ADC有効, 割り込み有効, プリスケーラ128 (125kHz @ 16MHz)
+  ADCSRA = (1 << ADEN) | (1 << ADIE)
+         | (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0);
+  // 最初の変換開始
+  adc_ch = 6;
+  ADCSRA |= (1 << ADSC);
+}
+
+static uint16_t adc_read(uint8_t ch) {
+  // ch: 0=A6(COM), 1=A7(MAN)
+  uint16_t val;
+  cli();
+  val = adc_raw[ch];
+  sei();
+  return val;
+}
+
 FastAccelStepperEngine engine = FastAccelStepperEngine();
 FastAccelStepper       *stepper = NULL;
 
@@ -92,10 +132,14 @@ void setup() {
 #ifdef USE_LCD
   lcd.begin();
 #endif
+
+  // ADC割り込み初期化 (engine.init()後に呼ぶ — Arduino ADC設定の上書き回避)
+  adc_init();
 }
 
-float analogReadOS(uint8_t pin, AdcOsState* st) {
-  st->buf[st->ptr++] = analogRead(pin);
+// ADC割り込みの結果をオーバーサンプリングバッファに蓄積して電圧変換
+float filterAdc(uint8_t ch, AdcOsState* st) {
+  st->buf[st->ptr++] = adc_read(ch);
   if (st->ptr >= ADC_OS_NUM) st->ptr = 0;
   uint32_t sum = 0;
   for (uint8_t i = 0; i < ADC_OS_NUM; i++) sum += st->buf[i];
@@ -112,24 +156,24 @@ void loop() {
   bool  dir  = false;
   bool  fast = false;
   float speed = 0;
-  float man_speed = analogReadOS(ADC_MAN_SPEED, &adcManState);
-  float com_speed = analogReadOS(ADC_COM_SPEED, &adcComState);
-  bool  mode      = digitalRead(SW_MODE);
-  bool  limit_cw  = !digitalRead(SW_LIMIT_CW);
-  bool  limit_ccw = !digitalRead(SW_LIMIT_CCW);
+  float man_speed = filterAdc(1, &adcManState); // ch1 = A7(MAN)
+  float com_speed = filterAdc(0, &adcComState); // ch0 = A6(COM)
+  bool  mode      =  FastGPIO::Pin<SW_MODE>::isInputHigh();
+  bool  limit_cw  = !FastGPIO::Pin<SW_LIMIT_CW>::isInputHigh();
+  bool  limit_ccw = !FastGPIO::Pin<SW_LIMIT_CCW>::isInputHigh();
 
   // Computer
   if (mode) {
-    ena   = digitalRead(SW_COM_ENA);
-    dir   = digitalRead(SW_COM_DIR);
+    ena   = FastGPIO::Pin<SW_COM_ENA>::isInputHigh();
+    dir   = FastGPIO::Pin<SW_COM_DIR>::isInputHigh();
     fast  = false;
     speed = com_speed;
   }
   // Manual
   else {
-    ena   = digitalRead(SW_MAN_ENA);
-    dir   = digitalRead(SW_MAN_DIR);
-    fast  = digitalRead(SW_MAN_FAST);
+    ena   = FastGPIO::Pin<SW_MAN_ENA>::isInputHigh();
+    dir   = FastGPIO::Pin<SW_MAN_DIR>::isInputHigh();
+    fast  = FastGPIO::Pin<SW_MAN_FAST>::isInputHigh();
     speed = man_speed;
   }
 
@@ -138,13 +182,13 @@ void loop() {
   bool limited = (limit_cw && dir) || (limit_ccw && !dir);
 
   // Update LED
-  digitalWrite(LED_MODE, mode);
-  digitalWrite(LED_ENA,  ena);
-  digitalWrite(LED_DIR,  dir);
-  digitalWrite(LED_FAST, fast);
+  FastGPIO::Pin<LED_MODE>::setOutputValue(mode);
+  FastGPIO::Pin<LED_ENA>::setOutputValue(ena);
+  FastGPIO::Pin<LED_DIR>::setOutputValue(dir);
+  FastGPIO::Pin<LED_FAST>::setOutputValue(fast);
 
   // for debug
-  digitalWrite(LED_SYSTEM, speed > 0.5f ? HIGH : LOW);
+  FastGPIO::Pin<LED_SYSTEM>::setOutputValue(speed > SPEED_THRESHOLD);
 
   // --- ステップパルス制御 (FastAccelStepper) ---
   bool shouldRun = ena && (speed > SPEED_THRESHOLD) && !limited;
@@ -158,8 +202,8 @@ void loop() {
 
   // MOTOR 出力更新 (パルス停止後に変更 → TB6600 セットアップタイム確保)
   // NPN トランジスタで反転されるため論理反転
-  digitalWrite(MOTOR_ENA, !ena);
-  digitalWrite(MOTOR_DIR, !dir);
+  FastGPIO::Pin<MOTOR_ENA>::setOutputValue(!ena);
+  FastGPIO::Pin<MOTOR_DIR>::setOutputValue(!dir);
   prevDir  = dir;
 
   if (shouldRun) {
