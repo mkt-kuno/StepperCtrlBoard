@@ -37,10 +37,10 @@ void updateLcdContent(bool ena, bool dir, bool fast, float speed,
 #define MOTOR_MICROSTEP       16    // マイクロステップ分割数
 
 // ステップ周波数の範囲 (Hz)
-#define STEP_FREQ_MIN    20
-#define STEP_FREQ_MAX  1000
+#define STEP_FREQ_MIN     50
+#define STEP_FREQ_MAX   5000
 // FAST モード時の倍率
-#define STEP_FAST_MULT   50
+#define STEP_FAST_MULT    10
 // FastAccelStepper (AVR, 1stepper) の上限は 50kHz
 #define STEP_FREQ_LIMIT  50000UL
 
