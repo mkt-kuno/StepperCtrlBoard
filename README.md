@@ -33,11 +33,11 @@ Arduino Nano ベースのステッピングモータ制御ボックス。手動�
 | D10 | MOTOR_STEP | ステップパルス出力 (FastAccelStepper) |
 | D11 | MOTOR_DIR | モータ方向出力 |
 | D12 | MOTOR_ENA | モータイネーブル出力 |
-| D13 | LED_SYSTEM | システム LED (デバッグ) |
+| D13 | LED_FAST | FAST 表示 LED |
 | A0 | LED_MODE | MODE 表示 LED |
 | A1 | LED_ENA | ENA 表示 LED |
 | A2 | LED_DIR | DIR 表示 LED |
-| A3 | LED_FAST | FAST 表示 LED |
+| A3 | LED_SYSTEM | システム LED (デバッグ) |
 | A4 | I2C_SDA | I2C データ (予約) |
 | A5 | I2C_SCL | I2C クロック (予約) |
 | A6 | ADC_COM_SPEED | Computer モード速度ボリューム |

@@ -22,11 +22,11 @@ void updateLcdContent(bool ena, bool dir, bool fast, float speed,
 #define MOTOR_STEP    (10)
 #define MOTOR_DIR     (11)
 #define MOTOR_ENA     (12)
-#define LED_SYSTEM    (13)
+#define LED_FAST      (13)
 #define LED_MODE      (A0) // 14
 #define LED_ENA       (A1) // 15
 #define LED_DIR       (A2) // 16
-#define LED_FAST      (A3) // 17
+#define LED_SYSTEM    (A3) // 17
 #define I2C_SDA       (A4) // 18
 #define I2C_SCL       (A5) // 19
 #define ADC_COM_SPEED (A6)
