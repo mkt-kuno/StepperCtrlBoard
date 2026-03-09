@@ -6,7 +6,7 @@
 #include "NonBlockingLcd.h"
 static NonBlockingLcd lcd;
 void updateLcdContent(bool ena, bool dir, bool fast, float speed,
-                      bool mode, bool limited);
+                      bool mode, bool limited, uint32_t freq);
 #endif
 
 #define UART_RX        (0)
@@ -32,11 +32,15 @@ void updateLcdContent(bool ena, bool dir, bool fast, float speed,
 #define ADC_COM_SPEED (A6)
 #define ADC_MAN_SPEED (A7)
 
+// モーター / リードスクリュー パラメータ
+#define MOTOR_STEPS_PER_MM  2400UL  // ステップ/mm (マイクロステップ込み)
+#define MOTOR_MICROSTEP       16    // マイクロステップ分割数
+
 // ステップ周波数の範囲 (Hz)
-#define STEP_FREQ_MIN    50
-#define STEP_FREQ_MAX  5000
+#define STEP_FREQ_MIN    20
+#define STEP_FREQ_MAX  1000
 // FAST モード時の倍率
-#define STEP_FAST_MULT   10
+#define STEP_FAST_MULT   50
 // FastAccelStepper (AVR, 1stepper) の上限は 50kHz
 #define STEP_FREQ_LIMIT  50000UL
 
@@ -226,7 +230,8 @@ void loop() {
   }
 
 #ifdef USE_LCD
-  updateLcdContent(ena, dir, fast, speed, mode, limited);
+  uint32_t activeFreq = prevRunning ? prevFreq : 0;
+  updateLcdContent(ena, dir, fast, speed, mode, limited, activeFreq);
   lcd.update();
 #endif
 }
@@ -235,22 +240,26 @@ void loop() {
 // LCD表示内容を更新するヘルパー関数
 // 必要に応じてカスタマイズしてください
 void updateLcdContent(bool ena, bool dir, bool fast, float speed,
-                      bool mode, bool limited) {
+                      bool mode, bool limited, uint32_t freq) {
   // 1行目: モード・状態
   char line[LCD_COLS + 1];
-  snprintf(line, sizeof(line), "%s %s %s%s",
+  snprintf(line, sizeof(line), "%s %s %s %s",
            mode ? "COM" : "MAN",
            ena  ? "RUN" : "STP",
            dir  ? "CW " : "CCW",
-           fast ? " FST" : "");
+           fast ? "FAST" : "");
   lcd.setText(0, line);
 
-  // 2行目: 速度・リミット
+  // 2行目: 載荷速度 mm/s (またはリミット)
   if (limited) {
     lcd.setText(1, "** LIMITED **   ");
   } else {
+    // 電圧 + 載荷速度 mm/s
     int sv = (int)(speed * 100);
-    snprintf(line, sizeof(line), "SPD:%d.%02dV       ", sv / 100, sv % 100);
+    unsigned int spd1k = (unsigned int)(freq * 1000UL / MOTOR_STEPS_PER_MM);
+    snprintf(line, sizeof(line), "%d.%02dV %2u.%03umm/s",
+             sv / 100, sv % 100,
+             spd1k / 1000, spd1k % 1000);
     lcd.setText(1, line);
   }
 }
