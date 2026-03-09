@@ -13,7 +13,9 @@
 
 // HD44780 commands
 #define LCD_CMD_CLEARDISPLAY   0x01
+#define LCD_CMD_RETURNHOME     0x02
 #define LCD_CMD_ENTRYMODESET   0x06  // increment, no shift
+#define LCD_CMD_DISPLAYOFF     0x08  // display off
 #define LCD_CMD_DISPLAYON      0x0C  // display on, cursor off, blink off
 #define LCD_CMD_FUNCTIONSET    0x28  // 4-bit, 2-line, 5x8
 
@@ -77,14 +79,16 @@ private:
   enum State : uint8_t {
     INIT_WIRE = 0,     // Wire.begin + setClock
     INIT_BL,           // backlight on, wait 1000ms for LCD power-up
-    INIT_8BIT_1,       // first 0x03 write
-    INIT_8BIT_2,       // second 0x03 write
-    INIT_8BIT_3,       // third 0x03 write
-    INIT_4BIT,         // switch to 4-bit mode
-    INIT_FUNCSET,      // function set
-    INIT_DISPON,       // display on + backlight
-    INIT_CLEAR,        // clear display
-    INIT_ENTRYMODE,    // entry mode set + buffer init
+    INIT_8BIT_1,       // first 0x03 write, wait >4.1ms
+    INIT_8BIT_2,       // second 0x03 write, wait >4.1ms
+    INIT_8BIT_3,       // third 0x03 write, wait >150us
+    INIT_4BIT,         // switch to 4-bit mode, wait
+    INIT_FUNCSET,      // function set (0x28)
+    INIT_DISPOFF,      // display off (0x08)
+    INIT_CLEAR,        // clear display (0x01), wait >1.52ms
+    INIT_ENTRYMODE,    // entry mode set (0x06)
+    INIT_DISPON,       // display on (0x0C)
+    INIT_HOME,         // return home (0x02), wait >1.52ms + buffer init
     READY              // normal operation
   };
 
@@ -112,51 +116,67 @@ private:
 
       case INIT_BL:
         expanderWrite(bl_);
-        waitUntil_ = millis() + 1000;
+        waitUntil_ = millis() + 1000;  // LCD power-up wait
         state_ = INIT_8BIT_1;
         break;
 
       case INIT_8BIT_1:
         write4bits(0x03 << 4);
-        waitUntil_ = millis() + 5;
+        waitUntil_ = millis() + 5;     // >4.1ms
         state_ = INIT_8BIT_2;
         break;
 
       case INIT_8BIT_2:
         write4bits(0x03 << 4);
-        waitUntil_ = millis() + 5;
+        waitUntil_ = millis() + 5;     // >4.1ms
         state_ = INIT_8BIT_3;
         break;
 
       case INIT_8BIT_3:
         write4bits(0x03 << 4);
-        waitUntil_ = millis() + 1;
+        waitUntil_ = millis() + 1;     // >150us
         state_ = INIT_4BIT;
         break;
 
       case INIT_4BIT:
-        write4bits(0x02 << 4);
+        write4bits(0x02 << 4);         // switch to 4-bit
+        waitUntil_ = millis() + 1;     // wait for mode switch
         state_ = INIT_FUNCSET;
         break;
 
       case INIT_FUNCSET:
-        command(LCD_CMD_FUNCTIONSET);
-        state_ = INIT_DISPON;
+        command(LCD_CMD_FUNCTIONSET);   // 4-bit, 2-line, 5x8
+        waitUntil_ = millis() + 1;
+        state_ = INIT_DISPOFF;
         break;
 
-      case INIT_DISPON:
-        command(LCD_CMD_DISPLAYON);
+      case INIT_DISPOFF:
+        command(LCD_CMD_DISPLAYOFF);    // display off before clear
+        waitUntil_ = millis() + 1;
         state_ = INIT_CLEAR;
         break;
 
       case INIT_CLEAR:
         command(LCD_CMD_CLEARDISPLAY);
-        waitUntil_ = millis() + 2;
+        waitUntil_ = millis() + 3;     // >1.52ms
         state_ = INIT_ENTRYMODE;
         break;
 
       case INIT_ENTRYMODE:
         command(LCD_CMD_ENTRYMODESET);
+        waitUntil_ = millis() + 1;
+        state_ = INIT_DISPON;
+        break;
+
+      case INIT_DISPON:
+        command(LCD_CMD_DISPLAYON);
+        waitUntil_ = millis() + 1;
+        state_ = INIT_HOME;
+        break;
+
+      case INIT_HOME:
+        command(LCD_CMD_RETURNHOME);
+        waitUntil_ = millis() + 3;     // >1.52ms
         memset(front_, ' ', LCD_TOTAL);
         memset(back_,  ' ', LCD_TOTAL);
         state_ = READY;
