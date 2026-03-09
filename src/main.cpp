@@ -254,13 +254,17 @@ void updateLcdContent(bool ena, bool dir, bool fast, float speed,
   if (limited) {
     lcd.setText(1, "** LIMITED **   ");
   } else {
-    // 電圧 + 載荷速度 mm/s
+    // 電圧 + 載荷速度 mm/s (手動で文字列構築 — snprintf多引数問題を回避)
     int sv = (int)(speed * 100);
-    unsigned int spd1k = (unsigned int)(freq * 1000UL / MOTOR_STEPS_PER_MM);
-    snprintf(line, sizeof(line), "%d.%02dV %2u.%03umm/s",
-             sv / 100, sv % 100,
-             spd1k / 1000, spd1k % 1000);
-    lcd.setText(1, line);
+    if (sv < 0) sv = 0;
+    int spd10k = (int)(freq * 10000UL / MOTOR_STEPS_PER_MM / MOTOR_MICROSTEP);
+
+    static char buf[17];
+    // 電圧部: "X.YYV " (6文字)
+    snprintf(buf, 7, "%d.%02dV ", sv / 100, sv % 100);
+    // 速度部: "Z.ZZZZmm/s" (10文字)
+    snprintf(buf + 6, 11, "%d.%04dmm/s", spd10k / 10000, spd10k % 10000);
+    lcd.setText(1, buf);
   }
 }
 #endif
