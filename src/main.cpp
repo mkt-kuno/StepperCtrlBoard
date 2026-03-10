@@ -33,7 +33,7 @@ void updateLcdContent(bool ena, bool dir, bool fast, float speed,
 #define ADC_MAN_SPEED (A7)
 
 // モーター / リードスクリュー パラメータ
-#define MOTOR_STEPS_PER_MM  2400UL  // ステップ/mm (マイクロステップ込み)
+#define MOTOR_STEPS_PER_ROT  200    // フルステップ/回転
 #define MOTOR_MICROSTEP       16    // マイクロステップ分割数
 
 // ステップ周波数の範囲 (Hz)
@@ -45,7 +45,7 @@ void updateLcdContent(bool ena, bool dir, bool fast, float speed,
 #define STEP_FREQ_LIMIT  50000UL
 
 // ADC電圧の閾値 (V) — この電圧以下ではモーター停止
-#define SPEED_THRESHOLD 0.5f
+#define SPEED_THRESHOLD 0.1f
 
 // 加速度 (steps/s²) — 大きいほど速度変化が即応的
 #define STEP_ACCEL  100000UL
@@ -254,16 +254,20 @@ void updateLcdContent(bool ena, bool dir, bool fast, float speed,
   if (limited) {
     lcd.setText(1, "** LIMITED **   ");
   } else {
-    // 電圧 + 載荷速度 mm/s (手動で文字列構築 — snprintf多引数問題を回避)
+    // 電圧 + RPM (手動で文字列構築 — snprintf多引数問題を回避)
     int sv = (int)(speed * 100);
     if (sv < 0) sv = 0;
-    int spd10k = (int)(freq * 10000UL / MOTOR_STEPS_PER_MM / MOTOR_MICROSTEP);
+    // RPM = freq * 60 / (MOTOR_STEPS_PER_ROT * MOTOR_MICROSTEP)
+    // rpm100 = freq * 6000 / (SPR * MS) で小数2桁 (long: AVR int は16bit)
+    long rpm100 = (long)(freq * 6000UL / ((unsigned long)MOTOR_STEPS_PER_ROT * MOTOR_MICROSTEP));
+    int rpm_i = (int)(rpm100 / 100);
+    int rpm_f = (int)(rpm100 % 100);
 
     static char buf[17];
     // 電圧部: "X.YYV " (6文字)
     snprintf(buf, 7, "%d.%02dV ", sv / 100, sv % 100);
-    // 速度部: "Z.ZZZZmm/s" (10文字)
-    snprintf(buf + 6, 11, "%d.%04dmm/s", spd10k / 10000, spd10k % 10000);
+    // RPM部: "ZZZZ.ZZrpm" (10文字)
+    snprintf(buf + 6, 11, "%4d.%02dRPM", rpm_i, rpm_f);
     lcd.setText(1, buf);
   }
 }
