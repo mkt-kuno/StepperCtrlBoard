@@ -241,33 +241,49 @@ void loop() {
 // 必要に応じてカスタマイズしてください
 void updateLcdContent(bool ena, bool dir, bool fast, float speed,
                       bool mode, bool limited, uint32_t freq) {
-  // 1行目: モード・状態
-  char line[LCD_COLS + 1];
-  snprintf(line, sizeof(line), "%s %s %s %s",
-           mode ? "COM" : "MAN",
-           ena  ? "RUN" : "STP",
-           dir  ? "CW " : "CCW",
-           fast ? "FAST" : "");
+  // 1行目: モード・状態 (snprintf不使用 — SRAM節約)
+  static char line[17];
+  char* p = line;
+  memcpy(p, mode ? "COM" : "MAN", 3); p += 3; *p++ = ' ';
+  memcpy(p, ena  ? "RUN" : "STP", 3); p += 3; *p++ = ' ';
+  memcpy(p, dir  ? "CW " : "CCW", 3); p += 3; *p++ = ' ';
+  if (fast) { memcpy(p, "FAST", 4); p += 4; }
+  *p = '\0';
   lcd.setText(0, line);
 
-  // 2行目: 載荷速度 mm/s (またはリミット)
+  // 2行目: 電圧 + RPM (またはリミット)
   if (limited) {
     lcd.setText(1, "** LIMITED **   ");
   } else {
-    // 電圧 + RPM (手動で文字列構築 — snprintf多引数問題を回避)
-    int sv = (int)(speed * 100);
+    int sv = (int)(speed * 1000);
     if (sv < 0) sv = 0;
-    // RPM = freq * 60 / (MOTOR_STEPS_PER_ROT * MOTOR_MICROSTEP)
-    // rpm100 = freq * 6000 / (SPR * MS) で小数2桁 (long: AVR int は16bit)
     long rpm100 = (long)(freq * 6000UL / ((unsigned long)MOTOR_STEPS_PER_ROT * MOTOR_MICROSTEP));
     int rpm_i = (int)(rpm100 / 100);
     int rpm_f = (int)(rpm100 % 100);
 
+    // 手動文字列構築 — snprintf のスタック消費を回避
+    // "X.YYYV ZZZ.ZZRPM" (16文字)
     static char buf[17];
-    // 電圧部: "X.YYV " (6文字)
-    snprintf(buf, 7, "%d.%02dV ", sv / 100, sv % 100);
-    // RPM部: "ZZZZ.ZZrpm" (10文字)
-    snprintf(buf + 6, 11, "%4d.%02dRPM", rpm_i, rpm_f);
+    int frac = sv % 1000;
+    // 電圧部: "X.YYYV " (7文字)
+    buf[0] = '0' + (char)(sv / 1000);
+    buf[1] = '.';
+    buf[2] = '0' + (char)(frac / 100);
+    buf[3] = '0' + (char)((frac / 10) % 10);
+    buf[4] = '0' + (char)(frac % 10);
+    buf[5] = 'V';
+    buf[6] = ' ';
+    // RPM部: "ZZZ.ZZRPM" (9文字) — 末尾3文字がRPM
+    buf[7]  = (rpm_i >= 100) ? ('0' + (char)(rpm_i / 100)) : ' ';
+    buf[8]  = (rpm_i >= 10)  ? ('0' + (char)((rpm_i / 10) % 10)) : ' ';
+    buf[9]  = '0' + (char)(rpm_i % 10);
+    buf[10] = '.';
+    buf[11] = '0' + (char)(rpm_f / 10);
+    buf[12] = '0' + (char)(rpm_f % 10);
+    buf[13] = 'R';
+    buf[14] = 'P';
+    buf[15] = 'M';
+    buf[16] = '\0';
     lcd.setText(1, buf);
   }
 }
