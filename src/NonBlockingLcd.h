@@ -31,7 +31,7 @@ public:
   // Only does Wire.begin() + state reset — returns immediately.
   void begin() {
     state_ = INIT_WIRE;
-    waitUntil_ = 0;
+    waitUntil_ = millis() + 100;  // 電源投入直後の電圧安定待ち (I2Cバスに触れる前)
     scanPos_ = 0;
     bl_ = LCD_BIT_BL;
   }
@@ -109,7 +109,7 @@ private:
     switch (state_) {
       case INIT_WIRE:
         Wire.begin();
-        Wire.setClock(400000);
+        Wire.setClock(100000);  // PCF8574 の最大 I2C クロックは 100kHz
         waitUntil_ = millis() + 50;
         state_ = INIT_BL;
         break;

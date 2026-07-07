@@ -32,50 +32,50 @@ void updateLcdContent(bool ena, bool dir, bool fast, float speed,
 #define ADC_COM_SPEED (A6)
 #define ADC_MAN_SPEED (A7)
 
-// モーター / リードスクリュー パラメータ
-#define MOTOR_STEPS_PER_ROT  200    // フルステップ/回転
-#define MOTOR_MICROSTEP       16    // マイクロステップ分割数
-
 // ステップ周波数の範囲 (Hz)
-#define STEP_FREQ_MIN     50
-#define STEP_FREQ_MAX   5000
+#define STEP_FREQ_MIN     20
+#define STEP_FREQ_MAX   4000
 // FAST モード時の倍率
 #define STEP_FAST_MULT    10
 // FastAccelStepper (AVR, 1stepper) の上限は 50kHz
 #define STEP_FREQ_LIMIT  50000UL
 
 // ADC電圧の閾値 (V) — この電圧以下ではモーター停止
-#define SPEED_THRESHOLD 0.1f
+#define SPEED_THRESHOLD 1.0f
 
 // 加速度 (steps/s²) — 大きいほど速度変化が即応的
-#define STEP_ACCEL  100000UL
+#define STEP_ACCEL  1000000UL
 
-// --- オーバーサンプリング ADC (チャンネル別バッファ) ---
-#define ADC_OS_NUM 16
-struct AdcOsState {
-  uint16_t buf[ADC_OS_NUM];
-  uint8_t  ptr;
-};
-
-static AdcOsState adcManState = {{0}, 0};
-static AdcOsState adcComState = {{0}, 0};
+// --- オーバーサンプリング ADC (ISR内累積) ---
+#define ADC_OS_SHIFT 6
+#define ADC_OS_NUM   (1 << ADC_OS_SHIFT)  // 64サンプル累積
 
 // --- ADC割り込み駆動 ---
 // A6 = MUX[3:0] = 0110, A7 = MUX[3:0] = 0111
-static volatile uint16_t adc_raw[2]; // [0]=A6(COM), [1]=A7(MAN)
-static volatile uint8_t  adc_ch = 6; // 現在の変換チャンネル (6 or 7)
+// 64サンプルの累積和を保持 (10bit×64 = 最大65472 → 16bitに収まる)
+static volatile uint16_t adc_sum[2];      // [0]=A6(COM), [1]=A7(MAN)
+static volatile uint8_t  adc_ch = 6;      // 現在の変換チャンネル (6 or 7)
 
 ISR(ADC_vect) {
+  static uint16_t acc = 0;
+  static uint8_t  cnt = 0;
   uint16_t val = ADC; // ADCL + ADCH を読み取り
-  if (adc_ch == 6) {
-    adc_raw[0] = val;
-    adc_ch = 7;
+  if (cnt == 0) {
+    // チャンネル切替直後の初回変換はダミー (S/Hクロストーク対策で捨てる)
+    acc = 0;
+    cnt = 1;
   } else {
-    adc_raw[1] = val;
-    adc_ch = 6;
+    acc += val;
+    if (cnt >= ADC_OS_NUM) {
+      // 64サンプル完了 → 公開してチャンネル切替
+      adc_sum[adc_ch - 6] = acc;
+      adc_ch ^= 1; // 6 <-> 7
+      ADMUX = (ADMUX & 0xF0) | (adc_ch & 0x0F);
+      cnt = 0;
+    } else {
+      cnt++;
+    }
   }
-  // 次チャンネルに切替して変換開始
-  ADMUX = (ADMUX & 0xF0) | (adc_ch & 0x0F);
   ADCSRA |= (1 << ADSC);
 }
 
@@ -90,13 +90,14 @@ static void adc_init() {
   ADCSRA |= (1 << ADSC);
 }
 
-static uint16_t adc_read(uint8_t ch) {
+static float adc_read_volts(uint8_t ch) {
   // ch: 0=A6(COM), 1=A7(MAN)
-  uint16_t val;
+  uint16_t sum;
   cli();
-  val = adc_raw[ch];
+  sum = adc_sum[ch];
   sei();
-  return val;
+  // 累積和のまま電圧変換 — サブLSB分解能を保持 (実効約13bit)
+  return 5.0f * sum / (1024.0f * ADC_OS_NUM);
 }
 
 FastAccelStepperEngine engine = FastAccelStepperEngine();
@@ -141,15 +142,6 @@ void setup() {
   adc_init();
 }
 
-// ADC割り込みの結果をオーバーサンプリングバッファに蓄積して電圧変換
-float filterAdc(uint8_t ch, AdcOsState* st) {
-  st->buf[st->ptr++] = adc_read(ch);
-  if (st->ptr >= ADC_OS_NUM) st->ptr = 0;
-  uint32_t sum = 0;
-  for (uint8_t i = 0; i < ADC_OS_NUM; i++) sum += st->buf[i];
-  return 5.0f * sum / 1024.0f / ADC_OS_NUM;
-}
-
 // --- 前回の状態を保持して無駄な再設定を避ける ---
 static bool     prevRunning = false;
 static uint32_t prevFreq    = 0;
@@ -160,8 +152,8 @@ void loop() {
   bool  dir  = false;
   bool  fast = false;
   float speed = 0;
-  float man_speed = filterAdc(1, &adcManState); // ch1 = A7(MAN)
-  float com_speed = filterAdc(0, &adcComState); // ch0 = A6(COM)
+  float man_speed = adc_read_volts(1); // ch1 = A7(MAN)
+  float com_speed = adc_read_volts(0); // ch0 = A6(COM)
   bool  mode      =  FastGPIO::Pin<SW_MODE>::isInputHigh();
   bool  limit_cw  = !FastGPIO::Pin<SW_LIMIT_CW>::isInputHigh();
   bool  limit_ccw = !FastGPIO::Pin<SW_LIMIT_CCW>::isInputHigh();
@@ -251,38 +243,34 @@ void updateLcdContent(bool ena, bool dir, bool fast, float speed,
   *p = '\0';
   lcd.setText(0, line);
 
-  // 2行目: 電圧 + RPM (またはリミット)
+  // 2行目: 電圧 + PPS (またはリミット)
   if (limited) {
     lcd.setText(1, "** LIMITED **   ");
   } else {
-    int sv = (int)(speed * 1000);
+    int sv = (int)(speed * 100.0f + 0.5f); // 10mV単位に丸め
     if (sv < 0) sv = 0;
-    long rpm100 = (long)(freq * 6000UL / ((unsigned long)MOTOR_STEPS_PER_ROT * MOTOR_MICROSTEP));
-    int rpm_i = (int)(rpm100 / 100);
-    int rpm_f = (int)(rpm100 % 100);
 
     // 手動文字列構築 — snprintf のスタック消費を回避
-    // "X.YYYV ZZZ.ZZRPM" (16文字)
+    // "X.YY V ZZZZZ PPS" (16文字)
     static char buf[17];
-    int frac = sv % 1000;
-    // 電圧部: "X.YYYV " (7文字)
-    buf[0] = '0' + (char)(sv / 1000);
+    // 電圧部: "X.YY V " (7文字) — 1mV位はADC分解能未満のため非表示
+    buf[0] = '0' + (char)(sv / 100);
     buf[1] = '.';
-    buf[2] = '0' + (char)(frac / 100);
-    buf[3] = '0' + (char)((frac / 10) % 10);
-    buf[4] = '0' + (char)(frac % 10);
+    buf[2] = '0' + (char)((sv / 10) % 10);
+    buf[3] = '0' + (char)(sv % 10);
+    buf[4] = ' ';
     buf[5] = 'V';
     buf[6] = ' ';
-    // RPM部: "ZZZ.ZZRPM" (9文字) — 末尾3文字がRPM
-    buf[7]  = (rpm_i >= 100) ? ('0' + (char)(rpm_i / 100)) : ' ';
-    buf[8]  = (rpm_i >= 10)  ? ('0' + (char)((rpm_i / 10) % 10)) : ' ';
-    buf[9]  = '0' + (char)(rpm_i % 10);
-    buf[10] = '.';
-    buf[11] = '0' + (char)(rpm_f / 10);
-    buf[12] = '0' + (char)(rpm_f % 10);
-    buf[13] = 'R';
+    // PPS部: "ZZZZZ PPS" (9文字) — 5桁右詰め・小数点なし
+    uint32_t f = freq;
+    for (int i = 11; i >= 7; i--) {
+      buf[i] = (f > 0 || i == 11) ? ('0' + (char)(f % 10)) : ' ';
+      f /= 10;
+    }
+    buf[12] = ' ';
+    buf[13] = 'P';
     buf[14] = 'P';
-    buf[15] = 'M';
+    buf[15] = 'S';
     buf[16] = '\0';
     lcd.setText(1, buf);
   }
