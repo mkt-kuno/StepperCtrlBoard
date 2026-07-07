@@ -33,8 +33,8 @@ void updateLcdContent(bool ena, bool dir, bool fast, float speed,
 #define ADC_MAN_SPEED (A7)
 
 // ステップ周波数の範囲 (Hz)
-#define STEP_FREQ_MIN     20
-#define STEP_FREQ_MAX   4000
+#define STEP_FREQ_MIN   12.5
+#define STEP_FREQ_MAX   5000
 // FAST モード時の倍率
 #define STEP_FAST_MULT    10
 // FastAccelStepper (AVR, 1stepper) の上限は 50kHz
@@ -44,7 +44,7 @@ void updateLcdContent(bool ena, bool dir, bool fast, float speed,
 #define SPEED_THRESHOLD 1.0f
 
 // 加速度 (steps/s²) — 大きいほど速度変化が即応的
-#define STEP_ACCEL  1000000UL
+#define STEP_ACCEL  100000UL
 
 // --- オーバーサンプリング ADC (ISR内累積) ---
 #define ADC_OS_SHIFT 6
