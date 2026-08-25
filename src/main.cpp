@@ -2,12 +2,10 @@
 #include <FastAccelStepper.h>
 #include <FastGPIO.h>
 
-#ifdef USE_LCD
 #include "NonBlockingLcd.h"
 static NonBlockingLcd lcd;
 void updateLcdContent(bool ena, bool dir, bool fast, float speed,
                       bool mode, bool limited, uint32_t freq);
-#endif
 
 #define UART_RX        (0)
 #define UART_TX        (1)
@@ -134,9 +132,7 @@ void setup() {
   // engine.init() が Timer1 を再構成するため、先に設定すると上書きされる可能性がある
   pinMode(SW_MAN_FAST, INPUT_PULLUP);
 
-#ifdef USE_LCD
   lcd.begin();
-#endif
 
   // ADC割り込み初期化 (engine.init()後に呼ぶ — Arduino ADC設定の上書き回避)
   adc_init();
@@ -221,14 +217,11 @@ void loop() {
     }
   }
 
-#ifdef USE_LCD
   uint32_t activeFreq = prevRunning ? prevFreq : 0;
   updateLcdContent(ena, dir, fast, speed, mode, limited, activeFreq);
   lcd.update();
-#endif
 }
 
-#ifdef USE_LCD
 // LCD表示内容を更新するヘルパー関数
 // 必要に応じてカスタマイズしてください
 void updateLcdContent(bool ena, bool dir, bool fast, float speed,
@@ -275,4 +268,3 @@ void updateLcdContent(bool ena, bool dir, bool fast, float speed,
     lcd.setText(1, buf);
   }
 }
-#endif

@@ -3,10 +3,6 @@
 #include <Arduino.h>
 #include <Wire.h>
 
-#ifndef LCD_I2C_ADDR
-#define LCD_I2C_ADDR 0x27
-#endif
-
 #define LCD_COLS 16
 #define LCD_ROWS  2
 #define LCD_TOTAL (LCD_COLS * LCD_ROWS)
@@ -25,19 +21,32 @@
 #define LCD_BIT_EN  0x04
 #define LCD_BIT_BL  0x08  // backlight
 
+// I2C scan range for PCF8574 / PCF8574A LCD backpacks
+static constexpr uint8_t LCD_SCAN_ADDRS[] = {
+  0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,  // PCF8574
+  0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F,  // PCF8574A
+};
+static constexpr uint8_t LCD_SCAN_COUNT = sizeof(LCD_SCAN_ADDRS);
+
 class NonBlockingLcd {
 public:
-  // Call once in setup(). Starts non-blocking init sequence.
-  // Only does Wire.begin() + state reset — returns immediately.
+  // Call once in setup(). Returns immediately.
+  // Non-blocking flow:
+  //   Wire.begin -> I2C scan (0x20-0x27, 0x38-0x3F) ->
+  //     if found: HD44780 init sequence.
+  //     if not found: stays inactive (setText/update are no-op).
   void begin() {
     state_ = INIT_WIRE;
-    waitUntil_ = millis() + 100;  // 電源投入直後の電圧安定待ち (I2Cバスに触れる前)
+    waitUntil_ = millis() + 100;  // power-on settle before touching the bus
     scanPos_ = 0;
     bl_ = LCD_BIT_BL;
+    active_ = false;
+    addr_ = 0;
   }
 
+  // No-op if scan found no LCD.
   void setText(uint8_t row, const char* text) {
-    if (row >= LCD_ROWS) return;
+    if (!active_ || row >= LCD_ROWS) return;
     uint8_t offset = row * LCD_COLS;
     uint8_t i = 0;
     for (; i < LCD_COLS && text[i] != '\0'; i++) {
@@ -49,15 +58,20 @@ public:
   }
 
   void setChar(uint8_t row, uint8_t col, char ch) {
-    if (row >= LCD_ROWS || col >= LCD_COLS) return;
+    if (!active_ || row >= LCD_ROWS || col >= LCD_COLS) return;
     back_[row * LCD_COLS + col] = ch;
   }
 
-  // Call every loop iteration.
-  // During init: advances one init step per call (non-blocking).
-  // After init: writes one dirty character per call.
+  // True if a usable LCD was detected at boot.
+  bool isActive() const { return active_; }
+
+  // True if init completed (READY state).
+  bool isReady() const { return state_ == READY; }
+
+  // Call every loop iteration. Non-blocking.
   bool update() {
     if (state_ < READY) return initStep();
+    if (!active_) return false;
 
     // Diff-scan: find one dirty char and write it
     for (uint8_t i = 0; i < LCD_TOTAL; i++) {
@@ -77,7 +91,8 @@ public:
 private:
   // Init state machine states
   enum State : uint8_t {
-    INIT_WIRE = 0,     // Wire.begin + setClock
+    INIT_WIRE = 0,     // Wire.begin + setClock + set short timeout
+    INIT_SCAN,         // probe 0x20-0x27 and 0x38-0x3F for an LCD
     INIT_BL,           // backlight on, wait 1000ms for LCD power-up
     INIT_8BIT_1,       // first 0x03 write, wait >4.1ms
     INIT_8BIT_2,       // second 0x03 write, wait >4.1ms
@@ -92,10 +107,12 @@ private:
     READY              // normal operation
   };
 
-  State    state_     = READY;   // default: not started
+  State    state_     = READY;
   uint8_t  bl_        = LCD_BIT_BL;
   uint32_t waitUntil_ = 0;
   uint8_t  scanPos_   = 0;
+  uint8_t  addr_      = 0;   // I2C address discovered by scan
+  bool     active_    = false;
 
   char front_[LCD_TOTAL];
   char back_[LCD_TOTAL];
@@ -110,9 +127,34 @@ private:
       case INIT_WIRE:
         Wire.begin();
         Wire.setClock(100000);  // PCF8574 の最大 I2C クロックは 100kHz
+        #if defined(WIRE_HAS_TIMEOUT) && WIRE_HAS_TIMEOUT > 0
+        Wire.setWireTimeout(1000);  // 1ms — 短め: scan を高速化 + バス固着対策
+        #endif
         waitUntil_ = millis() + 50;
-        state_ = INIT_BL;
+        state_ = INIT_SCAN;
         break;
+
+      case INIT_SCAN: {
+        // Probe 16 candidate addresses.
+        // NACK は即時、ACK は <1ms、setWireTimeout(1ms) が上限。
+        for (uint8_t i = 0; i < LCD_SCAN_COUNT; i++) {
+          uint8_t a = LCD_SCAN_ADDRS[i];
+          Wire.beginTransmission(a);
+          if (Wire.endTransmission() == 0) {
+            addr_ = a;
+            active_ = true;
+            break;
+          }
+        }
+        if (active_) {
+          waitUntil_ = millis() + 50;
+          state_ = INIT_BL;
+        } else {
+          // 液晶らしきものが無かった — 非アクティブで固定
+          state_ = READY;
+        }
+        break;
+      }
 
       case INIT_BL:
         expanderWrite(bl_);
@@ -191,7 +233,7 @@ private:
   // --- I2C low-level (PCF8574 + HD44780) ---
 
   void i2cWrite(uint8_t data) {
-    Wire.beginTransmission(LCD_I2C_ADDR);
+    Wire.beginTransmission(addr_);
     Wire.write(data);
     Wire.endTransmission();
   }
