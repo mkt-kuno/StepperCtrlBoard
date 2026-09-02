@@ -1,4 +1,4 @@
-# NextGenCtrlBox
+# StepperCtrlBoard
 
 Arduino Nano ベースのステッピングモータ制御ボックス。手動スイッチ操作と外部コンピュータ制御の 2 モードに対応し、ボリュームによる速度調整・リミットスイッチによる安全停止機能を備えます。  
 動作の安定のために、Arduino をUSB Serial経由（with Bootloader）ではなく、 Arduino-as-ICSPでICSP経由(without Bootloader)で書き込むことを強く推奨します  
